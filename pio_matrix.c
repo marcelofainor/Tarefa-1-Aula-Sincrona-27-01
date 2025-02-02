@@ -6,127 +6,121 @@
 #include "hardware/clocks.h"
 #include "hardware/adc.h"
 #include "pico/bootrom.h"
+#include "pio_matrix.pio.h" // Biblioteca para PIO WS2812
 
-//arquivo .pio
-#include "pio_matrix.pio.h"
-
-//número de LEDs
+// Número de LEDs
 #define NUM_PIXELS 25
 
-//pino de saída
+// Pino de saída
 #define OUT_PIN 7
 
-//botão de interupção
-const uint button_0 = 5;
-const uint button_1 = 6;
+// Pino do LED RGB
+#define LED_RGB_PIN 13
 
-//vetor para criar imagem na matriz de led - 1
-double desenho[25] =   {0.0, 0.3, 0.3, 0.3, 0.0,
-                        0.0, 0.3, 0.0, 0.3, 0.0, 
-                        0.0, 0.3, 0.3, 0.3, 0.0,
-                        0.0, 0.3, 0.0, 0.3, 0.0,
-                        0.0, 0.3, 0.3, 0.3, 0.0};
+// Botões de interrupção
+const uint button_a = 5; // Botão A
+const uint button_b = 6; // Botão B
 
-//vetor para criar imagem na matriz de led - 2
-double desenho2[25] =   {1.0, 0.0, 0.0, 0.0, 1.0,
-                        0.0, 1.0, 0.0, 1.0, 0.0, 
-                        0.0, 0.0, 1.0, 0.0, 0.0,
-                        0.0, 1.0, 0.0, 1.0, 0.0,
-                        1.0, 0.0, 0.0, 0.0, 1.0};
+// Contador
+volatile int counter = 0;
 
-//imprimir valor binário
-void imprimir_binario(int num) {
- int i;
- for (i = 31; i >= 0; i--) {
-  (num & (1 << i)) ? printf("1") : printf("0");
- }
-}
+// Debouncing
+bool button_a_pressed = false;
+bool button_b_pressed = false;
 
-//rotina da interrupção
-static void gpio_irq_handler(uint gpio, uint32_t events){
-    printf("Interrupção ocorreu no pino %d, no evento %d\n", gpio, events);
-    printf("HABILITANDO O MODO GRAVAÇÃO");
-	reset_usb_boot(0,0); //habilita o modo de gravação do microcontrolador
-}
+// Intensidade do brilho (0.0 a 1.0)
+float intensidade_brilho = 0.9; // Brilho máximo por padrão
 
-//rotina para definição da intensidade de cores do led
-uint32_t matrix_rgb(double b, double r, double g)
-{
-  unsigned char R, G, B;
-  R = r * 255;
-  G = g * 255;
-  B = b * 255;
-  return (G << 24) | (R << 16) | (B << 8);
-}
-
-//rotina para acionar a matrix de leds - ws2812b
-void desenho_pio(double *desenho, uint32_t valor_led, PIO pio, uint sm, double r, double g, double b){
-
-    for (int16_t i = 0; i < NUM_PIXELS; i++) {
-        if (i%2==0)
-        {
-            valor_led = matrix_rgb(desenho[24-i], r=0.0, g=0.0);
-            pio_sm_put_blocking(pio, sm, valor_led);
-
-        }else{
-            valor_led = matrix_rgb(b=0.0, desenho[24-i], g=0.0);
-            pio_sm_put_blocking(pio, sm, valor_led);
+// Rotina da interrupção
+static void gpio_irq_handler(uint gpio, uint32_t events) {
+    if (gpio == button_a) {
+        if (!button_a_pressed) {
+            button_a_pressed = true; // Marcar como pressionado
+            counter = (counter + 1) % 10; // Incrementa o contador
+            printf("Botão A pressionado: %d\n", counter); // Debug
+        }
+    } else if (gpio == button_b) {
+        if (!button_b_pressed) {
+            button_b_pressed = true; // Marcar como pressionado
+            counter = (counter - 1 + 10) % 10; // Decrementa o contador
+            printf("Botão B pressionado: %d\n", counter); // Debug
         }
     }
-    imprimir_binario(valor_led);
 }
 
-//função principal
-int main()
-{
-    PIO pio = pio0; 
-    bool ok;
-    uint16_t i;
-    uint32_t valor_led;
-    double r = 0.0, b = 0.0 , g = 0.0;
+// Função para definir a cor dos LEDs com controle de intensidade
+uint32_t matrix_rgb(double b, double r, double g, float intensidade) {
+    unsigned char R, G, B;
+    R = r * 255 * intensidade; // Aplica a intensidade ao vermelho
+    G = g * 255 * intensidade; // Aplica a intensidade ao verde
+    B = b * 255 * intensidade; // Aplica a intensidade ao azul
+    return (G << 24) | (R << 16) | (B << 8);
+}
 
-    //coloca a frequência de clock para 128 MHz, facilitando a divisão pelo clock
-    ok = set_sys_clock_khz(128000, false);
+// Função para desenhar números na matriz de LEDs (0-9)
+void desenhar_numero_na_matriz(PIO pio, uint sm, int numero) {
+    int leds[10][NUM_PIXELS] = {
+        {1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1},//numero 0
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0},//numero 1
+        {1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1},//numero 2
+        {1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1},//numero 3
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1},//numero 4
+        {1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1},//numero 5
+        {1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1},//numero 6
+        {1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1},//numero 7
+        {1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1},//numero 8
+        {1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1} //numero 9
+    };
+    for (int i = 0; i < NUM_PIXELS; i++) {
+        pio_sm_put_blocking(pio, sm, leds[numero][i] ? matrix_rgb(1.0, 0.0, 0.0, intensidade_brilho) : matrix_rgb(0.0, 0.0, 0.0, intensidade_brilho));
+    }
+}
 
-    // Inicializa todos os códigos stdio padrão que estão ligados ao binário.
-    stdio_init_all();
-
-    printf("iniciando a transmissão PIO");
-    if (ok) printf("clock set to %ld\n", clock_get_hz(clk_sys));
-
-    //configurações da PIO
+// Função principal
+int main() {
+    PIO pio = pio0;
     uint offset = pio_add_program(pio, &pio_matrix_program);
     uint sm = pio_claim_unused_sm(pio, true);
     pio_matrix_program_init(pio, sm, offset, OUT_PIN);
 
-    //inicializar o botão de interrupção - GPIO5
-    gpio_init(button_0);
-    gpio_set_dir(button_0, GPIO_IN);
-    gpio_pull_up(button_0);
+    stdio_init_all();
 
-    //inicializar o botão de interrupção - GPIO5
-    gpio_init(button_1);
-    gpio_set_dir(button_1, GPIO_IN);
-    gpio_pull_up(button_1);
+    // Configuração dos botões
+    gpio_init(button_a);
+    gpio_set_dir(button_a, GPIO_IN);
+    gpio_pull_up(button_a);
+    
+    gpio_init(button_b);
+    gpio_set_dir(button_b, GPIO_IN);
+    gpio_pull_up(button_b);
 
-    //interrupção da gpio habilitada
-    gpio_set_irq_enabled_with_callback(button_0, GPIO_IRQ_EDGE_FALL, 1, & gpio_irq_handler);
+    // Configuração do LED RGB
+    gpio_init(LED_RGB_PIN);
+    gpio_set_dir(LED_RGB_PIN, GPIO_OUT);
 
+    // Configuração das interrupções
+    gpio_set_irq_enabled_with_callback(button_a, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+    gpio_set_irq_enabled_with_callback(button_b, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+
+    desenhar_numero_na_matriz(pio, sm, counter);
+
+    bool led_state = false; // Estado do LED
     while (true) {
+        desenhar_numero_na_matriz(pio, sm, counter);
     
-    if(gpio_get(button_1)) //botão em nível alto
-    {
-        //rotina para escrever na matriz de leds com o emprego de PIO - desenho 2
-        desenho_pio(desenho, valor_led, pio, sm, r, g, b);
-    }
-    else
-    {
-        //rotina para escrever na matriz de leds com o emprego de PIO - desenho 1
-        desenho_pio(desenho2, valor_led, pio, sm, r, g, b);
+        // Piscar LED vermelho
+        gpio_put(LED_RGB_PIN, led_state ? 1 : 0);
+        led_state = !led_state; // Alterna o estado
+        sleep_ms(200); // Controla a frequência de piscar (5 vezes por segundo)
+
+        // Resetar o estado dos botões após debouncing
+        if (gpio_get(button_a)) {
+            button_a_pressed = false;
+        }
+        if (gpio_get(button_b)) {
+            button_b_pressed = false;
+        }
     }
 
-    sleep_ms(500);
-    printf("\nfrequeência de clock %ld\r\n", clock_get_hz(clk_sys));
-    }
-    
+    return 0;
 }
